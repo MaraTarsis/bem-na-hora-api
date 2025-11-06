@@ -32,6 +32,15 @@
       "tipoUsuario": "PACIENTE",
       "statusPaciente": "ASSISTIDO",
       "cuidadorId": 3
+    },
+    {
+      "id": 5,
+      "nome": "Marta Souza",
+      "email": "martasouza@gmail.com",
+      "senha": "123456",
+      "tipoUsuario": "PACIENTE",
+      "statusPaciente": "ASSISTIDO",
+      "cuidadorId": 3
     }
   ],
   "receitas": [
