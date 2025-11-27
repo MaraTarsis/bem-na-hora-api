@@ -2,7 +2,7 @@ const jsonServer = require("json-server");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-
+const bcrypt = require("bcryptjs");
 const server = jsonServer.create();
 const router = jsonServer.router("db.json");
 const middlewares = jsonServer.defaults();
@@ -12,6 +12,8 @@ server.use(jsonServer.bodyParser);
 server.use(middlewares);
 
 const dbFile = path.join(__dirname, "db.json");
+
+// JWT removido — atualmente apenas bcrypt é usado para hashing de senhas
 
 // Rota personalizada para buscar pacientes por cuidador
 server.get("/pacientes-por-cuidador/:cuidadorId", (req, res) => {
@@ -39,6 +41,20 @@ function writeDb(data) {
   fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
 }
 
+// Garante que senhas armazenadas em texto sejam convertidas para hash
+function ensureHashedPasswords() {
+  const db = readDb();
+  let changed = false;
+  db.usuarios = db.usuarios.map((u) => {
+    if (u.senha && typeof u.senha === "string" && !u.senha.startsWith("$2")) {
+      u.senha = bcrypt.hashSync(u.senha, 8);
+      changed = true;
+    }
+    return u;
+  });
+  if (changed) writeDb(db);
+}
+
 // Gera ID incremental (baseado no maior existente)
 function gerarId(lista) {
   return lista.length ? Math.max(...lista.map((i) => i.id)) + 1 : 1;
@@ -55,19 +71,17 @@ server.post("/login", (req, res) => {
   }
 
   const db = readDb();
-  const usuario = db.usuarios.find(
-    (u) => u.email === email && u.senha === senha
-  );
-
+  const usuario = db.usuarios.find((u) => u.email === email);
   if (!usuario) {
     return res.status(401).json({ erro: "Credenciais inválidas." });
   }
 
+  const senhaValida = bcrypt.compareSync(senha, usuario.senha);
+  if (!senhaValida)
+    return res.status(401).json({ erro: "Credenciais inválidas." });
+
   const { senha: _, ...userData } = usuario;
-  res.json({
-    mensagem: "Login bem-sucedido!",
-    usuario: userData,
-  });
+  res.json({ mensagem: "Login bem-sucedido!", usuario: userData });
 });
 
 // -------------------------
@@ -75,15 +89,28 @@ server.post("/login", (req, res) => {
 // -------------------------
 server.get("/usuarios", (req, res) => {
   const db = readDb();
-  res.json(db.usuarios);
+  const usuariosSemSenha = db.usuarios.map(({ senha, ...u }) => u);
+  res.json(usuariosSemSenha);
 });
 
+// Registro de usuário (hash de senha)
 server.post("/usuarios", (req, res) => {
   const db = readDb();
-  const novo = { id: gerarId(db.usuarios), ...req.body };
+  const { email, senha } = req.body;
+
+  if (!email || !senha)
+    return res.status(400).json({ erro: "Email e senha são obrigatórios." });
+
+  const existe = db.usuarios.find((u) => u.email === email);
+  if (existe) return res.status(409).json({ erro: "Email já cadastrado." });
+
+  const hashed = bcrypt.hashSync(senha, 8);
+  const novo = { id: gerarId(db.usuarios), ...req.body, senha: hashed };
   db.usuarios.push(novo);
   writeDb(db);
-  res.status(201).json(novo);
+
+  const { senha: _, ...userData } = novo;
+  res.status(201).json(userData);
 });
 
 server.put("/usuarios/:id", (req, res) => {
@@ -92,7 +119,12 @@ server.put("/usuarios/:id", (req, res) => {
   const index = db.usuarios.findIndex((u) => u.id === id);
   if (index === -1)
     return res.status(404).json({ erro: "Usuário não encontrado" });
-  db.usuarios[index] = { ...db.usuarios[index], ...req.body };
+  const updated = { ...db.usuarios[index], ...req.body };
+  // Se enviar senha em texto, hash antes de salvar
+  if (req.body.senha) {
+    updated.senha = bcrypt.hashSync(req.body.senha, 8);
+  }
+  db.usuarios[index] = updated;
   writeDb(db);
   res.json(db.usuarios[index]);
 });
@@ -261,6 +293,9 @@ server.delete("/registros/:id", (req, res) => {
 server.use(router);
 
 const PORT = 4000;
+
+// Garante hashing de senhas existentes e inicia o servidor
+ensureHashedPasswords();
 server.listen(PORT, () => {
   console.log(`🚀 API rodando em http://localhost:${PORT}`);
 });
